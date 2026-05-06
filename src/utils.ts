@@ -81,14 +81,11 @@ export function determineHealthState(
   tokenPercent: number,
   config: LobocutConfig
 ): HealthState {
-  // RED: probe failed or critical zone with no recent successful pass
   if (probeResult?.state === "RED") return "RED";
   if (tokenPercent >= 90 && (!probeResult || probeResult.state !== "GREEN")) return "RED";
 
-  // YELLOW: caution zone or early degradation
   if (tokenPercent >= config.accelerateThreshold) return "YELLOW";
   if (probeResult?.state === "YELLOW") return "YELLOW";
 
-  // GREEN: safe zone with no probe yet or exact match
   return "GREEN";
 }

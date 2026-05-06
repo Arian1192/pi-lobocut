@@ -24,12 +24,23 @@ const PROBE_INSTRUCTION =
 function getTextFromAssistant(message: AssistantMessage): string {
   return message.content
     .filter((c): c is TextContent => c.type === "text")
-    .map((c: TextContent) => c.text)
+    .map((c) => c.text)
     .join("");
 }
 
 function stripSentinelFromText(text: string): string {
   return text.replace(/LBC-[A-Z0-9]{4}-\d{4}/g, "").trim();
+}
+
+function getHealthEmoji(health: HealthState): string {
+  switch (health) {
+    case "GREEN":
+      return "🟢";
+    case "YELLOW":
+      return "🟡";
+    case "RED":
+      return "🔴";
+  }
 }
 
 export default function lobocutExtension(pi: ExtensionAPI) {
@@ -43,8 +54,19 @@ export default function lobocutExtension(pi: ExtensionAPI) {
     const usage = ctx.getContextUsage();
     const tokens = usage?.tokens ?? 0;
     const window = usage?.contextWindow ?? 0;
-    const emoji = currentHealth === "GREEN" ? "🟢" : currentHealth === "YELLOW" ? "🟡" : "🔴";
+    const emoji = getHealthEmoji(currentHealth);
     ctx.ui.setStatus("lobocut", `${emoji} ${Math.round(tokens / 1000)}k/${Math.round(window / 1000)}k`);
+  }
+
+  function getHealthTransitionMessage(newHealth: HealthState, tokens: number): string | null {
+    if (newHealth === "RED" && currentHealth !== "RED") {
+      const suggestion = config.alertMode === "suggest" ? " Consider `/compact` or `/new`." : "";
+      return `🔴 Lobocut: Degradation detected at ~${tokens.toLocaleString()} tokens. Sweet spot logged.${suggestion}`;
+    }
+    if (newHealth === "YELLOW" && currentHealth === "GREEN") {
+      return `🟡 Lobocut: Caution zone reached at ~${tokens.toLocaleString()} tokens.`;
+    }
+    return null;
   }
 
   function handleStateTransition(
@@ -54,14 +76,9 @@ export default function lobocutExtension(pi: ExtensionAPI) {
   ) {
     if (newHealth === currentHealth) return;
 
-    if (newHealth === "RED" && currentHealth !== "RED") {
-      const suggestion = config.alertMode === "suggest" ? " Consider `/compact` or `/new`." : "";
-      ctx.ui.notify(
-        `🔴 Lobocut: Degradation detected at ~${tokens.toLocaleString()} tokens. Sweet spot logged.${suggestion}`,
-        "error"
-      );
-    } else if (newHealth === "YELLOW" && currentHealth === "GREEN") {
-      ctx.ui.notify(`🟡 Lobocut: Caution zone reached at ~${tokens.toLocaleString()} tokens.`, "warning");
+    const message = getHealthTransitionMessage(newHealth, tokens);
+    if (message) {
+      ctx.ui.notify(message, newHealth === "RED" ? "error" : "warning");
     }
 
     currentHealth = newHealth;
@@ -89,97 +106,86 @@ export default function lobocutExtension(pi: ExtensionAPI) {
     updateFooter(ctx);
   });
 
-  pi.on(
-    "before_agent_start",
-    (async (event: BeforeAgentStartEvent, ctx: ExtensionContext) => {
-      const usage = ctx.getContextUsage();
-      const tokens = usage?.tokens ?? 0;
-      const percent = usage?.percent ?? 0;
+  pi.on("before_agent_start", async (event: BeforeAgentStartEvent, ctx: ExtensionContext) => {
+    const usage = ctx.getContextUsage();
+    const tokens = usage?.tokens ?? 0;
+    const percent = usage?.percent ?? 0;
+    let systemPrompt = event.systemPrompt;
 
-      // Inject sentinel exactly once at the start of the session
-      if (!sentinelInjected) {
-        sentinelInjected = true;
-        const systemPrompt = event.systemPrompt + `\n\nSENTINEL_ID: ${state.sentinelId}`;
+    if (!sentinelInjected) {
+      sentinelInjected = true;
+      systemPrompt += `\n\nSENTINEL_ID: ${state.sentinelId}`;
+    }
 
-        // If we're also due for a probe, append probe instruction
-        if (usage && tokens - state.lastCheckTokens >= getProbeInterval(tokens, percent, config)) {
-          probeInjected = true;
-          return { systemPrompt: systemPrompt + "\n\n" + PROBE_INSTRUCTION };
-        }
+    if (usage && tokens - state.lastCheckTokens >= getProbeInterval(tokens, percent, config)) {
+      probeInjected = true;
+      systemPrompt += "\n\n" + PROBE_INSTRUCTION;
+      return { systemPrompt };
+    }
 
-        return { systemPrompt };
-      }
-
-      // Check if probe should fire
-      if (usage && tokens - state.lastCheckTokens >= getProbeInterval(tokens, percent, config)) {
-        probeInjected = true;
-        return { systemPrompt: event.systemPrompt + "\n\n" + PROBE_INSTRUCTION };
-      }
-
-      return;
-    }) as any
-  );
+    if (systemPrompt !== event.systemPrompt) {
+      return { systemPrompt };
+    }
+  });
 
   pi.on("message_end", async (event, ctx) => {
-    if (event.message.role !== "assistant") return undefined;
+    if (event.message.role !== "assistant") {
+      return;
+    }
 
     const assistantMsg = event.message as AssistantMessage;
 
-    // If we injected a probe this turn, evaluate the response
-    if (probeInjected) {
-      probeInjected = false;
-      const text = getTextFromAssistant(assistantMsg);
-      const result = evaluateProbe(state.sentinelId, text);
-
-      const usage = ctx.getContextUsage();
-      const tokens = usage?.tokens ?? 0;
-      const percent = usage?.percent ?? 0;
-
-      if (result.state === "RED" && state.firstFailureTokens === null) {
-        state.firstFailureTokens = tokens;
-
-        // Log to global analytics
-        const model = ctx.model;
-        appendGlobalLog({
-          timestamp: Date.now(),
-          sessionId: ctx.sessionManager.getSessionFile() ?? "unknown",
-          model: model ? `${model.provider}/${model.id}` : "unknown",
-          contextWindow: usage?.contextWindow ?? 0,
-          firstFailureTokens: tokens,
-          sentinelId: state.sentinelId,
-        });
-      }
-
-      state.healthHistory.push({
-        timestamp: Date.now(),
-        tokens,
-        state: result.state,
-        distance: result.distance,
-        responseSnippet: stripSentinelFromText(text).slice(0, 200),
-      });
-      state.lastCheckTokens = tokens;
-      saveState(pi.appendEntry, state);
-
-      const newHealth = determineHealthState(result, percent, config);
-      handleStateTransition(newHealth, tokens, ctx);
-
-      // Strip sentinel from visible response
-      const cleanedText = stripSentinelFromText(text);
-      const cleanedContent: TextContent[] =
-        cleanedText.length > 0 ? [{ type: "text", text: cleanedText }] : [];
-
-      // Preserve non-text content (thinking, tool calls)
-      const otherContent = assistantMsg.content.filter((c) => c.type !== "text");
-
-      return {
-        message: {
-          ...assistantMsg,
-          content: [...cleanedContent, ...otherContent],
-        },
-      };
+    if (!probeInjected) {
+      return;
     }
 
-    return undefined;
+    probeInjected = false;
+    const text = getTextFromAssistant(assistantMsg);
+    const result = evaluateProbe(state.sentinelId, text);
+
+    const usage = ctx.getContextUsage();
+    const tokens = usage?.tokens ?? 0;
+    const percent = usage?.percent ?? 0;
+
+    if (result.state === "RED" && state.firstFailureTokens === null) {
+      state.firstFailureTokens = tokens;
+
+      const model = ctx.model;
+      appendGlobalLog({
+        timestamp: Date.now(),
+        sessionId: ctx.sessionManager.getSessionFile() ?? "unknown",
+        model: model ? `${model.provider}/${model.id}` : "unknown",
+        contextWindow: usage?.contextWindow ?? 0,
+        firstFailureTokens: tokens,
+        sentinelId: state.sentinelId,
+      });
+    }
+
+    state.healthHistory.push({
+      timestamp: Date.now(),
+      tokens,
+      state: result.state,
+      distance: result.distance,
+      responseSnippet: stripSentinelFromText(text).slice(0, 200),
+    });
+    state.lastCheckTokens = tokens;
+    saveState(pi.appendEntry, state);
+
+    const newHealth = determineHealthState(result, percent, config);
+    handleStateTransition(newHealth, tokens, ctx);
+
+    const cleanedText = stripSentinelFromText(text);
+    const cleanedContent: TextContent[] =
+      cleanedText.length > 0 ? [{ type: "text", text: cleanedText }] : [];
+
+    const otherContent = assistantMsg.content.filter((c) => c.type !== "text");
+
+    return {
+      message: {
+        ...assistantMsg,
+        content: [...cleanedContent, ...otherContent],
+      },
+    };
   });
 
   pi.on("turn_end", async (_event: TurnEndEvent, ctx: ExtensionContext) => {
@@ -188,6 +194,7 @@ export default function lobocutExtension(pi: ExtensionAPI) {
 
   pi.on(
     "session_before_compact",
+    // The runtime supports returning customInstructions, but this isn't reflected in ExtensionHandler types yet.
     (async (event: SessionBeforeCompactEvent) => {
       const instruction = `Session started with integrity code ${state.sentinelId}.`;
       const customInstructions = event.customInstructions

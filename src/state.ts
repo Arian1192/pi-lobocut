@@ -12,15 +12,15 @@ export function createInitialState(): LobocutState {
 
 export function loadState(sessionManager: { getBranch(): Array<{ type: string; customType?: string; data?: unknown }> }): LobocutState {
   const entries = sessionManager.getBranch();
-  let latestState: LobocutState | null = null;
 
-  for (const entry of entries) {
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const entry = entries[i];
     if (entry.type === "custom" && entry.customType === "lobocut-state") {
-      latestState = entry.data as LobocutState;
+      return entry.data as LobocutState;
     }
   }
 
-  return latestState ?? createInitialState();
+  return createInitialState();
 }
 
 export function saveState(

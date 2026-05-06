@@ -1,5 +1,5 @@
 import { appendFileSync, existsSync, mkdirSync } from "node:fs";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 
 export interface GlobalLogEntry {
@@ -12,7 +12,7 @@ export interface GlobalLogEntry {
 }
 
 function getGlobalLogPath(): string {
-  return `${homedir()}/.pi/agent/lobocut-log.jsonl`;
+  return join(homedir(), ".pi", "agent", "lobocut-log.jsonl");
 }
 
 export function appendGlobalLog(entry: GlobalLogEntry): void {
