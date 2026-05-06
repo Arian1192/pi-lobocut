@@ -22,7 +22,7 @@
 //   "scripts": { "sandcastle": "npx tsx .sandcastle/main.ts" }
 
 import * as sandcastle from "@ai-hero/sandcastle";
-import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
+import { podman } from "@ai-hero/sandcastle/sandboxes/podman";
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -61,13 +61,13 @@ for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
   // -------------------------------------------------------------------------
   const plan = await sandcastle.run({
     hooks,
-    sandbox: docker(),
+    sandbox: podman(),
     name: "planner",
     // One iteration is enough: the planner just needs to read and reason,
     // not write code.
     maxIterations: 1,
     // Opus for planning: dependency analysis benefits from deeper reasoning.
-    agent: sandcastle.pi("claude-sonnet-4-6"),
+    agent: sandcastle.pi("opencode-go/kimi-k2.6"),
     promptFile: "./.sandcastle/plan-prompt.md",
   });
 
@@ -111,7 +111,7 @@ for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
     issues.map(async (issue) => {
       const sandbox = await sandcastle.createSandbox({
         branch: issue.branch,
-        sandbox: docker(),
+        sandbox: podman(),
         hooks,
         copyToWorktree,
       });
@@ -121,7 +121,7 @@ for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
         const implement = await sandbox.run({
           name: "implementer",
           maxIterations: 100,
-          agent: sandcastle.pi("claude-sonnet-4-6"),
+          agent: sandcastle.pi("opencode-go/kimi-k2.6"),
           promptFile: "./.sandcastle/implement-prompt.md",
           promptArgs: {
             TASK_ID: issue.id,
@@ -135,7 +135,7 @@ for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
           const review = await sandbox.run({
             name: "reviewer",
             maxIterations: 1,
-            agent: sandcastle.pi("claude-sonnet-4-6"),
+            agent: sandcastle.pi("opencode-go/kimi-k2.6"),
             promptFile: "./.sandcastle/review-prompt.md",
             promptArgs: {
               BRANCH: issue.branch,
@@ -203,10 +203,10 @@ for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
   // -------------------------------------------------------------------------
   await sandcastle.run({
     hooks,
-    sandbox: docker(),
+    sandbox: podman(),
     name: "merger",
     maxIterations: 1,
-    agent: sandcastle.pi("claude-sonnet-4-6"),
+    agent: sandcastle.pi("opencode-go/kimi-k2.6"),
     promptFile: "./.sandcastle/merge-prompt.md",
     promptArgs: {
       // A markdown list of branch names, one per line.
