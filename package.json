@@ -6,7 +6,8 @@
   "private": true,
   "scripts": {
     "test": "vitest --run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "sandcastle" : "npx tsx .sandcastle/main.ts"
   },
   "devDependencies": {
     "tsx": "^4.21.0",
