@@ -1,22 +1,23 @@
 import type { HealthState, LobocutConfig, ProbeResult, Zone } from "./types.js";
 
 export function sanitizeProbeResponse(text: string, probeResult: ProbeResult): string {
-  let cleaned = text.replace(/LBC-[A-Z0-9]{4}-\d{4}/g, "").trim();
+  const cleaned = text.replace(/LBC-[A-Z0-9]{4}-\d{4}/g, "").trim();
 
-  if (!probeResult.candidate) {
-    const lines = cleaned.split("\n");
-    const filtered = lines.filter((line) => {
-      const lower = line.toLowerCase();
-      return (
-        !lower.includes("sentinel_id") &&
-        !lower.includes("session integrity code") &&
-        !lower.includes("integrity code")
-      );
-    });
-    cleaned = filtered.join("\n").trim();
+  if (probeResult.candidate) {
+    return cleaned;
   }
 
-  return cleaned;
+  const lines = cleaned.split("\n");
+  const filtered = lines.filter((line) => {
+    const lower = line.toLowerCase();
+    return (
+      !lower.includes("sentinel_id") &&
+      !lower.includes("session integrity code") &&
+      !lower.includes("integrity code")
+    );
+  });
+
+  return filtered.join("\n").trim();
 }
 
 export function generateSentinelId(): string {

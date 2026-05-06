@@ -117,7 +117,6 @@ export default function lobocutExtension(pi: ExtensionAPI) {
     if (usage && tokens - state.lastCheckTokens >= getProbeInterval(tokens, percent, config)) {
       probeInjected = true;
       systemPrompt += "\n\n" + PROBE_INSTRUCTION;
-      return { systemPrompt };
     }
 
     if (systemPrompt !== event.systemPrompt) {
