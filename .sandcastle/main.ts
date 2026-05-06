@@ -23,6 +23,9 @@
 
 import * as sandcastle from "@ai-hero/sandcastle";
 import { podman } from "@ai-hero/sandcastle/sandboxes/podman";
+import { existsSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -43,6 +46,16 @@ const hooks = {
 // platform-specific binaries and any packages added since the last copy.
 const copyToWorktree = ["node_modules"];
 
+const piAuthFiles = [
+  join(homedir(), ".pi", "agent", "auth.json"),
+  join(homedir(), ".pi", "agent", "settings.json"),
+]
+  .filter((path) => existsSync(path))
+  .map((hostPath) => ({
+    hostPath,
+    sandboxPath: `~/.pi/agent/${hostPath.split("/").pop()}`,
+  }));
+
 // ---------------------------------------------------------------------------
 // Main loop
 // ---------------------------------------------------------------------------
@@ -62,6 +75,7 @@ for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
   const plan = await sandcastle.run({
     hooks,
     sandbox: podman(),
+    copyFilesToSandbox: piAuthFiles,
     name: "planner",
     // One iteration is enough: the planner just needs to read and reason,
     // not write code.
@@ -114,6 +128,7 @@ for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
         sandbox: podman(),
         hooks,
         copyToWorktree,
+        copyFilesToSandbox: piAuthFiles,
       });
 
       try {
@@ -204,6 +219,7 @@ for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
   await sandcastle.run({
     hooks,
     sandbox: podman(),
+    copyFilesToSandbox: piAuthFiles,
     name: "merger",
     maxIterations: 1,
     agent: sandcastle.pi("opencode-go/kimi-k2.6"),
