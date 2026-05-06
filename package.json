@@ -1,0 +1,11 @@
+{
+  "name": "lobocut",
+  "version": "0.1.0",
+  "description": "Context Sentinel Skill - AI Integrity & Sweet Spot Monitor",
+  "type": "module",
+  "private": true,
+  "devDependencies": {
+    "@ai-hero/sandcastle": "file:/home/arian/dev/sandcastle",
+    "tsx": "^4.21.0"
+  }
+}
