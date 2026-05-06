@@ -15,7 +15,7 @@
     "vitest": "^3.2.4"
   },
   "dependencies": {
-    "@ai-hero/sandcastle": "file:../../sandcastle",
+    "@ai-hero/sandcastle": "file:../sandcastle",
     "@mariozechner/pi-coding-agent": "^0.73.0"
   },
   "pi": {
