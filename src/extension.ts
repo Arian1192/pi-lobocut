@@ -15,21 +15,18 @@ import {
   evaluateProbe,
   getProbeInterval,
   determineHealthState,
+  sanitizeProbeResponse,
 } from "./utils.js";
 import { appendGlobalLog } from "./log.js";
 
 const PROBE_INSTRUCTION =
-  "Before your main response, state the Session Integrity Code given at the start of this session, on its own line.";
+  "Before your main response, state the SENTINEL_ID given at the start of this session, on its own line.";
 
 function getTextFromAssistant(message: AssistantMessage): string {
   return message.content
     .filter((c): c is TextContent => c.type === "text")
     .map((c) => c.text)
     .join("");
-}
-
-function stripSentinelFromText(text: string): string {
-  return text.replace(/LBC-[A-Z0-9]{4}-\d{4}/g, "").trim();
 }
 
 function getHealthEmoji(health: HealthState): string {
@@ -147,7 +144,24 @@ export default function lobocutExtension(pi: ExtensionAPI) {
     const tokens = usage?.tokens ?? 0;
     const percent = usage?.percent ?? 0;
 
-    if (result.state === "RED" && state.firstFailureTokens === null) {
+    if (result.state === "RED") {
+      state.consecutiveMisses++;
+    } else {
+      state.consecutiveMisses = 0;
+    }
+
+    state.healthHistory.push({
+      timestamp: Date.now(),
+      tokens,
+      state: result.state,
+      distance: result.distance,
+      responseSnippet: sanitizeProbeResponse(text, result).slice(0, 200),
+    });
+    state.lastCheckTokens = tokens;
+
+    const newHealth = determineHealthState(result, percent, state.consecutiveMisses, config);
+
+    if (newHealth === "RED" && state.firstFailureTokens === null) {
       state.firstFailureTokens = tokens;
 
       const model = ctx.model;
@@ -161,20 +175,10 @@ export default function lobocutExtension(pi: ExtensionAPI) {
       });
     }
 
-    state.healthHistory.push({
-      timestamp: Date.now(),
-      tokens,
-      state: result.state,
-      distance: result.distance,
-      responseSnippet: stripSentinelFromText(text).slice(0, 200),
-    });
-    state.lastCheckTokens = tokens;
     saveState(pi.appendEntry, state);
-
-    const newHealth = determineHealthState(result, percent, config);
     handleStateTransition(newHealth, tokens, ctx);
 
-    const cleanedText = stripSentinelFromText(text);
+    const cleanedText = sanitizeProbeResponse(text, result);
     const cleanedContent: TextContent[] =
       cleanedText.length > 0 ? [{ type: "text", text: cleanedText }] : [];
 
@@ -206,6 +210,7 @@ export default function lobocutExtension(pi: ExtensionAPI) {
 
   pi.on("session_compact", async (_event: SessionCompactEvent, ctx: ExtensionContext) => {
     state.lastCheckTokens = 0;
+    state.consecutiveMisses = 0;
     state.healthHistory.push({
       timestamp: Date.now(),
       tokens: 0,

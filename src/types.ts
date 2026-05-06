@@ -29,6 +29,7 @@ export interface LobocutState {
   sentinelId: string;
   lastCheckTokens: number;
   firstFailureTokens: number | null;
+  consecutiveMisses: number;
   healthHistory: HealthHistoryEntry[];
 }
 

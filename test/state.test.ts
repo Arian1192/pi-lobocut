@@ -8,6 +8,7 @@ describe("createInitialState", () => {
     expect(state.sentinelId).toMatch(/^LBC-[A-Z]{4}-\d{4}$/);
     expect(state.lastCheckTokens).toBe(0);
     expect(state.firstFailureTokens).toBeNull();
+    expect(state.consecutiveMisses).toBe(0);
     expect(state.healthHistory).toEqual([]);
   });
 });
@@ -27,12 +28,14 @@ describe("loadState", () => {
       sentinelId: "LBC-ABCD-1234",
       lastCheckTokens: 1000,
       firstFailureTokens: null,
+      consecutiveMisses: 0,
       healthHistory: [],
     };
     const entry2: LobocutState = {
       sentinelId: "LBC-EFGH-5678",
       lastCheckTokens: 5000,
       firstFailureTokens: 4500,
+      consecutiveMisses: 1,
       healthHistory: [
         { timestamp: 123, tokens: 4500, state: "RED", distance: 3, responseSnippet: "foo" },
       ],
@@ -69,6 +72,7 @@ describe("saveState", () => {
       sentinelId: "LBC-TEST-1234",
       lastCheckTokens: 1000,
       firstFailureTokens: null,
+      consecutiveMisses: 0,
       healthHistory: [],
     };
     saveState(appendEntry, state);

@@ -6,6 +6,7 @@ export function createInitialState(): LobocutState {
     sentinelId: generateSentinelId(),
     lastCheckTokens: 0,
     firstFailureTokens: null,
+    consecutiveMisses: 0,
     healthHistory: [],
   };
 }

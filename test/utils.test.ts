@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { generateSentinelId, levenshteinDistance, extractSentinelCandidate, evaluateProbe, getZone, getProbeInterval, determineHealthState } from "../src/utils.js";
+import { generateSentinelId, levenshteinDistance, extractSentinelCandidate, evaluateProbe, getZone, getProbeInterval, determineHealthState, sanitizeProbeResponse } from "../src/utils.js";
 import type { LobocutConfig } from "../src/types.js";
 
 describe("generateSentinelId", () => {
@@ -133,27 +133,73 @@ describe("determineHealthState", () => {
   };
 
   it("should return GREEN when no probe and tokens < 70%", () => {
-    expect(determineHealthState(null, 50, config)).toBe("GREEN");
+    expect(determineHealthState(null, 50, 0, config)).toBe("GREEN");
   });
 
   it("should return GREEN for exact match", () => {
-    expect(determineHealthState({ state: "GREEN", distance: 0, candidate: "LBC-ABCD-1234" }, 50, config)).toBe("GREEN");
+    expect(determineHealthState({ state: "GREEN", distance: 0, candidate: "LBC-ABCD-1234" }, 50, 0, config)).toBe("GREEN");
   });
 
   it("should return YELLOW when tokens >= 70%", () => {
-    expect(determineHealthState(null, 75, config)).toBe("YELLOW");
+    expect(determineHealthState(null, 75, 0, config)).toBe("YELLOW");
   });
 
   it("should return YELLOW for distance 1-2", () => {
-    expect(determineHealthState({ state: "YELLOW", distance: 1, candidate: "LBC-ABCD-1235" }, 50, config)).toBe("YELLOW");
-    expect(determineHealthState({ state: "YELLOW", distance: 2, candidate: "LBC-ABCD-1256" }, 50, config)).toBe("YELLOW");
+    expect(determineHealthState({ state: "YELLOW", distance: 1, candidate: "LBC-ABCD-1235" }, 50, 0, config)).toBe("YELLOW");
+    expect(determineHealthState({ state: "YELLOW", distance: 2, candidate: "LBC-ABCD-1256" }, 50, 0, config)).toBe("YELLOW");
   });
 
-  it("should return RED for probe failure", () => {
-    expect(determineHealthState({ state: "RED", distance: 3, candidate: "LBC-ABCD-9999" }, 50, config)).toBe("RED");
+  it("should return YELLOW for a single RED miss in safe zone", () => {
+    expect(determineHealthState({ state: "RED", distance: null, candidate: null }, 50, 1, config)).toBe("YELLOW");
+  });
+
+  it("should return RED for consecutive RED misses in safe zone", () => {
+    expect(determineHealthState({ state: "RED", distance: null, candidate: null }, 50, 2, config)).toBe("RED");
+    expect(determineHealthState({ state: "RED", distance: null, candidate: null }, 50, 3, config)).toBe("RED");
+  });
+
+  it("should return RED for probe failure in caution or critical zone", () => {
+    expect(determineHealthState({ state: "RED", distance: 3, candidate: "LBC-ABCD-9999" }, 75, 1, config)).toBe("RED");
+    expect(determineHealthState({ state: "RED", distance: null, candidate: null }, 95, 1, config)).toBe("RED");
   });
 
   it("should return RED for critical zone without recent pass", () => {
-    expect(determineHealthState(null, 95, config)).toBe("RED");
+    expect(determineHealthState(null, 95, 0, config)).toBe("RED");
+  });
+});
+
+describe("sanitizeProbeResponse", () => {
+  it("should strip the sentinel pattern from text", () => {
+    const result = sanitizeProbeResponse("The sentinel is LBC-ABCD-1234 here", { state: "GREEN", distance: 0, candidate: "LBC-ABCD-1234" });
+    expect(result).toBe("The sentinel is  here");
+  });
+
+  it("should strip probe failure text when no candidate is found", () => {
+    const result = sanitizeProbeResponse(
+      "No se proporcionó ningún Session Integrity Code\n\nAquí está mi respuesta principal.",
+      { state: "RED", distance: null, candidate: null }
+    );
+    expect(result).toBe("Aquí está mi respuesta principal.");
+  });
+
+  it("should strip SENTINEL_ID failure text when no candidate is found", () => {
+    const result = sanitizeProbeResponse(
+      "No SENTINEL_ID was provided at the start.\nMain response here.",
+      { state: "RED", distance: null, candidate: null }
+    );
+    expect(result).toBe("Main response here.");
+  });
+
+  it("should not strip legitimate content when a candidate exists", () => {
+    const result = sanitizeProbeResponse(
+      "The SENTINEL_ID is LBC-ABCD-1234. Main response here.",
+      { state: "GREEN", distance: 0, candidate: "LBC-ABCD-1234" }
+    );
+    expect(result).toBe("The SENTINEL_ID is . Main response here.");
+  });
+
+  it("should handle empty string after stripping", () => {
+    const result = sanitizeProbeResponse("LBC-ABCD-1234", { state: "GREEN", distance: 0, candidate: "LBC-ABCD-1234" });
+    expect(result).toBe("");
   });
 });

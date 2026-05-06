@@ -77,6 +77,7 @@ function createMockCtx(overrides: Partial<ExtensionContext> = {}): ExtensionCont
       getBranch: vi.fn().mockReturnValue([]),
       getEntries: vi.fn().mockReturnValue([]),
       getLeafId: vi.fn().mockReturnValue("leaf-1"),
+      getSessionFile: vi.fn().mockReturnValue("session.json"),
     } as any,
     modelRegistry: {} as any,
     model: undefined,
@@ -155,6 +156,7 @@ describe("lobocutExtension", () => {
         ]),
         getEntries: vi.fn().mockReturnValue([]),
         getLeafId: vi.fn().mockReturnValue("leaf-1"),
+        getSessionFile: vi.fn().mockReturnValue("session.json"),
       } as any,
     });
 
@@ -219,7 +221,7 @@ describe("lobocutExtension", () => {
       systemPromptOptions: {} as any,
     }, ctx);
 
-    expect(result?.systemPrompt).toContain("Session Integrity Code");
+    expect(result?.systemPrompt).toContain("SENTINEL_ID");
   });
 
   it("should evaluate response in message_end when probe was injected", async () => {
@@ -282,6 +284,7 @@ describe("lobocutExtension", () => {
         ]),
         getEntries: vi.fn().mockReturnValue([]),
         getLeafId: vi.fn().mockReturnValue("leaf-1"),
+        getSessionFile: vi.fn().mockReturnValue("session.json"),
       } as any,
     });
 
@@ -289,5 +292,109 @@ describe("lobocutExtension", () => {
     await sessionTreeHandler({ type: "session_tree" }, ctx);
 
     expect(ctx.ui.setStatus).toHaveBeenCalledWith("lobocut", expect.stringContaining("🟢"));
+  });
+
+  it("should return YELLOW on first probe miss in safe zone", async () => {
+    const pi = createMockPi();
+    lobocutExtension(pi);
+
+    const ctx = createMockCtx({
+      getContextUsage: vi.fn().mockReturnValue({ tokens: 11000, contextWindow: 272000, percent: 4 }),
+    });
+
+    const sessionStartHandler = (pi.on as any).mock.calls.find((call: any) => call[0] === "session_start")[1];
+    await sessionStartHandler({ reason: "startup" }, ctx);
+
+    const beforeAgentStartHandler = (pi.on as any).mock.calls.find((call: any) => call[0] === "before_agent_start")[1];
+    await beforeAgentStartHandler({
+      type: "before_agent_start",
+      prompt: "Hello",
+      systemPrompt: "You are a helpful assistant.",
+      systemPromptOptions: {} as any,
+    }, ctx);
+
+    const messageEndHandler = (pi.on as any).mock.calls.find((call: any) => call[0] === "message_end")[1];
+    const event = {
+      type: "message_end",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "No se proporcionó ningún SENTINEL_ID.\n\nAquí está mi respuesta principal." }],
+        api: "openai-completions",
+        provider: "openai",
+        model: "gpt-4",
+        usage: { input: 1000, output: 500, cost: { input: 0, output: 0, total: 0 } },
+        stopReason: "stop",
+        timestamp: Date.now(),
+      },
+    };
+
+    const result = await messageEndHandler(event, ctx);
+    expect(result?.message?.content?.[0]?.text).not.toContain("SENTINEL_ID");
+    expect(ctx.ui.notify).not.toHaveBeenCalledWith(expect.stringContaining("Degradation"), expect.anything());
+    expect(ctx.ui.setStatus).toHaveBeenCalledWith("lobocut", expect.stringContaining("🟡"));
+  });
+
+  it("should return RED after two consecutive probe misses in safe zone", async () => {
+    const pi = createMockPi();
+    lobocutExtension(pi);
+
+    const ctx = createMockCtx({
+      getContextUsage: vi.fn().mockReturnValue({ tokens: 11000, contextWindow: 272000, percent: 4 }),
+    });
+
+    const sessionStartHandler = (pi.on as any).mock.calls.find((call: any) => call[0] === "session_start")[1];
+    await sessionStartHandler({ reason: "startup" }, ctx);
+
+    const beforeAgentStartHandler = (pi.on as any).mock.calls.find((call: any) => call[0] === "before_agent_start")[1];
+    const messageEndHandler = (pi.on as any).mock.calls.find((call: any) => call[0] === "message_end")[1];
+
+    // First miss
+    await beforeAgentStartHandler({
+      type: "before_agent_start",
+      prompt: "Hello",
+      systemPrompt: "You are a helpful assistant.",
+      systemPromptOptions: {} as any,
+    }, ctx);
+    await messageEndHandler({
+      type: "message_end",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "No SENTINEL_ID found." }],
+        api: "openai-completions",
+        provider: "openai",
+        model: "gpt-4",
+        usage: { input: 1000, output: 500, cost: { input: 0, output: 0, total: 0 } },
+        stopReason: "stop",
+        timestamp: Date.now(),
+      },
+    }, ctx);
+
+    // Reset mocks to isolate second miss assertion
+    vi.clearAllMocks();
+
+    // Second miss: bump tokens so probe fires again
+    ctx.getContextUsage = vi.fn().mockReturnValue({ tokens: 22000, contextWindow: 272000, percent: 8 });
+    await beforeAgentStartHandler({
+      type: "before_agent_start",
+      prompt: "Hello again",
+      systemPrompt: "You are a helpful assistant.",
+      systemPromptOptions: {} as any,
+    }, ctx);
+    await messageEndHandler({
+      type: "message_end",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "Still no SENTINEL_ID." }],
+        api: "openai-completions",
+        provider: "openai",
+        model: "gpt-4",
+        usage: { input: 1000, output: 500, cost: { input: 0, output: 0, total: 0 } },
+        stopReason: "stop",
+        timestamp: Date.now(),
+      },
+    }, ctx);
+
+    expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("Degradation"), "error");
+    expect(ctx.ui.setStatus).toHaveBeenCalledWith("lobocut", expect.stringContaining("🔴"));
   });
 });
